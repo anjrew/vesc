@@ -32,6 +32,7 @@
 #define VESC_ACKERMANN__VESC_TO_ODOM_HPP_
 
 #include <nav_msgs/msg/odometry.hpp>
+#include <rcl_interfaces/msg/set_parameters_result.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/float64.hpp>
 #include <tf2_ros/transform_broadcaster.h>
@@ -39,6 +40,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace vesc_ackermann
 {
@@ -75,9 +77,15 @@ private:
   rclcpp::Subscription<Float64>::SharedPtr servo_sub_;
   std::shared_ptr<tf2_ros::TransformBroadcaster> tf_pub_;
 
+  // Dynamic-param handle. Lets `ros2 param set` re-tune speed_to_erpm_gain /
+  // _offset at runtime without relaunching the car — see docs/vesc_calibration.md §2.
+  rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_callback_handle_;
+
   // ROS callbacks
   void vescStateCallback(const VescStateStamped::SharedPtr state);
   void servoCmdCallback(const Float64::SharedPtr servo);
+  rcl_interfaces::msg::SetParametersResult parameter_callback(
+    const std::vector<rclcpp::Parameter> & parameters);
 };
 
 }  // namespace vesc_ackermann

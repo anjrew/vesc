@@ -35,6 +35,7 @@
 
 #include <cmath>
 #include <string>
+#include <vector>
 
 namespace vesc_ackermann
 {
@@ -77,6 +78,13 @@ VescToOdom::VescToOdom(const rclcpp::NodeOptions & options)
   }
 
   publish_tf_ = declare_parameter("publish_tf", publish_tf_);
+
+  // Register the dynamic-param callback. Only speed_to_erpm_gain /
+  // speed_to_erpm_offset refresh at runtime; structural params (frame names,
+  // publish_tf, use_servo_cmd_to_calc_angular_velocity) are rejected with a
+  // reason pointing the user at a relaunch. See docs/vesc_calibration.md §2.
+  param_callback_handle_ = this->add_on_set_parameters_callback(
+    std::bind(&VescToOdom::parameter_callback, this, std::placeholders::_1));
 
   // create odom publisher
   odom_pub_ = create_publisher<Odometry>("odom", 10);
@@ -188,6 +196,60 @@ void VescToOdom::vescStateCallback(const VescStateStamped::SharedPtr state)
 void VescToOdom::servoCmdCallback(const Float64::SharedPtr servo)
 {
   last_servo_cmd_ = servo;
+}
+
+rcl_interfaces::msg::SetParametersResult VescToOdom::parameter_callback(
+  const std::vector<rclcpp::Parameter> & parameters)
+{
+  // The callback runs on the same default executor as vescStateCallback,
+  // so assignment to speed_to_erpm_gain_ / _offset_ cannot race with the
+  // read at the top of vescStateCallback. No mutex needed.
+  rcl_interfaces::msg::SetParametersResult result;
+  result.successful = true;
+
+  for (const auto & param : parameters) {
+    const auto & name = param.get_name();
+    if (name == "speed_to_erpm_gain" &&
+        param.get_type() == rclcpp::ParameterType::PARAMETER_DOUBLE) {
+      const double new_gain = param.as_double();
+      if (new_gain <= 0.0) {
+        // Zero gain NaNs current_speed = (erpm - offset) / gain. Negative
+        // gain silently inverts the velocity sign — /odometry/vesc would
+        // report the car driving backwards while it drives forwards.
+        // Reject anything non-positive at the node, not just at the
+        // helper script, so direct `ros2 param set` calls are also safe.
+        result.successful = false;
+        result.reason = "speed_to_erpm_gain must be > 0";
+        break;
+      }
+      speed_to_erpm_gain_ = new_gain;
+    } else if (name == "speed_to_erpm_offset" &&
+               param.get_type() == rclcpp::ParameterType::PARAMETER_DOUBLE) {
+      speed_to_erpm_offset_ = param.as_double();
+    } else {
+      // Structural params (frame names, publish_tf, use_servo_cmd_...) are
+      // read only at construction. Refusing live changes prevents silent
+      // no-ops that mislead the user into thinking they took effect.
+      result.successful = false;
+      result.reason =
+        "Parameter '" + name + "' is read at construction only; relaunch the node to change it.";
+      break;
+    }
+  }
+
+  // Log every accepted runtime parameter change so the operator sees the
+  // new value land. Gated on result.successful so rejected batches don't
+  // mislead the operator (the framework refuses the whole batch on any
+  // rejection).
+  if (result.successful && !parameters.empty()) {
+    std::string summary;
+    for (const auto & p : parameters) {
+      if (!summary.empty()) summary += ", ";
+      summary += p.get_name() + "=" + p.value_to_string();
+    }
+    RCLCPP_INFO(this->get_logger(), "Parameters updated: %s", summary.c_str());
+  }
+  return result;
 }
 
 }  // namespace vesc_ackermann
