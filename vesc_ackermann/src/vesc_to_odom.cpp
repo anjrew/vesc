@@ -51,6 +51,7 @@ VescToOdom::VescToOdom(const rclcpp::NodeOptions & options)
   odom_frame_("odom"),
   base_frame_("base_link"),
   use_servo_cmd_(true),
+  invert_bicycle_yaw_(false),
   publish_tf_(false),
   x_(0.0),
   y_(0.0),
@@ -76,6 +77,12 @@ VescToOdom::VescToOdom(const rclcpp::NodeOptions & options)
     steering_to_servo_offset_ = get_parameter("steering_angle_to_servo_offset").get_value<double>();
     wheelbase_ = get_parameter("wheelbase").get_value<double>();
   }
+
+  // Runtime-settable: negate the bicycle-model yaw rate to correct a reversed
+  // steering-sign convention. Declared unconditionally (not gated on
+  // use_servo_cmd_) so `ros2 param set` works even when the bicycle yaw is
+  // toggled on later; it only has an effect while use_servo_cmd_ is true.
+  invert_bicycle_yaw_ = declare_parameter("invert_bicycle_yaw", invert_bicycle_yaw_);
 
   publish_tf_ = declare_parameter("publish_tf", publish_tf_);
 
@@ -121,6 +128,9 @@ void VescToOdom::vescStateCallback(const VescStateStamped::SharedPtr state)
     current_steering_angle =
       (last_servo_cmd_->data - steering_to_servo_offset_) / steering_to_servo_gain_;
     current_angular_velocity = current_speed * tan(current_steering_angle) / wheelbase_;
+    if (invert_bicycle_yaw_) {
+      current_angular_velocity = -current_angular_velocity;
+    }
   }
 
   // use current state as last state if this is our first time here
@@ -226,6 +236,11 @@ rcl_interfaces::msg::SetParametersResult VescToOdom::parameter_callback(
     } else if (name == "speed_to_erpm_offset" &&
                param.get_type() == rclcpp::ParameterType::PARAMETER_DOUBLE) {
       speed_to_erpm_offset_ = param.as_double();
+    } else if (name == "invert_bicycle_yaw" &&
+               param.get_type() == rclcpp::ParameterType::PARAMETER_BOOL) {
+      // Live tuning knob: only changes the sign of the next published yaw rate,
+      // so it is safe to flip at runtime to A/B a reversed steering convention.
+      invert_bicycle_yaw_ = param.as_bool();
     } else {
       // Structural params (frame names, publish_tf, use_servo_cmd_...) are
       // read only at construction. Refusing live changes prevents silent
