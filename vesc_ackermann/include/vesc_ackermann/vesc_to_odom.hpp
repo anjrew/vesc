@@ -60,6 +60,11 @@ private:
   std::string base_frame_;
   /** State message does not report servo position, so use the command instead */
   bool use_servo_cmd_;
+  /** Negate the bicycle-model yaw rate before publishing — corrects a reversed
+   * steering-sign convention without touching the actual servo command. Runtime
+   * settable (see docs/vesc_calibration.md §2); only effective when
+   * use_servo_cmd_ is true. */
+  bool invert_bicycle_yaw_;
   // conversion gain and offset
   double speed_to_erpm_gain_, speed_to_erpm_offset_;
   double steering_to_servo_gain_, steering_to_servo_offset_;
