@@ -47,7 +47,11 @@ using std_msgs::msg::Float64;
 using vesc_msgs::msg::VescStateStamped;
 
 VescToOdom::VescToOdom(const rclcpp::NodeOptions & options)
-: Node("vesc_to_odom_node", options),
+// Enable the runtime logger-level services (~/get_logger_levels /
+// ~/set_logger_levels) so an operator can raise this node to DEBUG — or quiet
+// it — live via a service call, without relaunching. Copy the incoming options
+// so a caller that already enabled it is not overridden.
+: Node("vesc_to_odom_node", rclcpp::NodeOptions(options).enable_logger_service(true)),
   odom_frame_("odom"),
   base_frame_("base_link"),
   use_servo_cmd_(true),
@@ -241,6 +245,16 @@ rcl_interfaces::msg::SetParametersResult VescToOdom::parameter_callback(
       // Live tuning knob: only changes the sign of the next published yaw rate,
       // so it is safe to flip at runtime to A/B a reversed steering convention.
       invert_bicycle_yaw_ = param.as_bool();
+      // Log the *effect* of the change, not just the value (the generic summary
+      // below lists the value) — this is the "why" line the operator looks for
+      // when a sign flip suddenly changes localization behaviour.
+      RCLCPP_INFO(
+        this->get_logger(),
+        "invert_bicycle_yaw=%s: published bicycle-model yaw (/odometry/vesc "
+        "twist.angular.z) is now %s. Effective only while "
+        "use_servo_cmd_to_calc_angular_velocity is true.",
+        invert_bicycle_yaw_ ? "true" : "false",
+        invert_bicycle_yaw_ ? "negated" : "unchanged");
     } else {
       // Structural params (frame names, publish_tf, use_servo_cmd_...) are
       // read only at construction. Refusing live changes prevents silent
